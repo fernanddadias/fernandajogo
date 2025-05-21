@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Samurai Infinity Run</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Roboto:wght@400;700&display=swap');
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body, html {
+    margin: 0; padding: 0; height: 100%;
+    background: linear-gradient(120deg, #1e1e1e 0%, #4b2e2e 70%);
+    font-family: 'Roboto', sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #gameContainer {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  canvas {
+    display: block;
+    background: linear-gradient(to top, #3a2a21 0%, #161616 80%);
+    margin: 0 auto;
+    outline: 3px solid #b53e3e;
+    border-radius: 12px;
+  }
+
+  #hud {
+    position: absolute;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #f5deb3;
+    font-weight: 700;
+    font-size: 22px;
+    text-shadow: 0 0 6px #ffb347;
+    font-family: 'Press Start 2P', cursive;
+    user-select: none;
+    letter-spacing: 2px;
+    text-align: center;
+  }
+
+  #message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 80vw;
+    transform: translate(-50%, -50%);
+    color: #ff9f1c;
+    font-size: 24px;
+    font-weight: 900;
+    text-shadow: 0 0 8px #ff471a;
+    font-family: 'Press Start 2P', cursive;
+    text-align: center;
+    display: none;
+    pointer-events: none;
+  }
+
+  #startMessage {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    width: 90vw;
+    transform: translateX(-50%);
+    color: #a3be8c;
+    font-size: 16px;
+    font-weight: 700;
+    text-shadow: 0 0 5px #81a1c1;
+    font-family: 'Press Start 2P', cursive;
+    user-select: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="800" height="400" aria-label="Jogo Samurai Infinity Run"></canvas>
+  <div id="hud">Pontuação: <span id="score">0</span></div>
+  <div id="message"></div>
+  <div id="startMessage">Pressione Espaço ou Clique para Começar - Pule com ESPAÇO ou TOQUE</div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const width = canvas.width;
+  const height = canvas.height;
+
+  const groundY = height - 80;
+
+  // Game state
+  let running = false;
+  let gameOver = false;
+  let score = 0;
+  let speed = 6;
+  let obstacleSpawnTimer = 0;
+  let obstacleSpawnInterval = 120; // frames
+  let difficultyStep = 100; // pontos para aumentar dificuldade
+  let speedIncrement = 1.3;
+  let maxSpeed = 18;
+
+  // Player
+  const player = {
+    x: 100,
+    y: groundY,
+    width: 48,
+    height: 64,
+    vy: 0,
+    gravity: 0.7,
+    jumpForce: -15,
+    grounded: true,
+
+    spriteIdleColor: '#d94016',
+    spriteRunColor: '#e75c31',
+
+    draw() {
+      ctx.fillStyle = this.spriteRunColor;
+      ctx.shadowColor = '#ff4411';
+      ctx.shadowBlur = 8;
+      ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
+
+      // Kabuto (helmet) shape to add samurai helmet style
+      ctx.fillStyle = '#efb77c';
+      ctx.beginPath();
+      ctx.moveTo(this.x + 12, this.y - this.height);
+      ctx.lineTo(this.x + this.width / 2, this.y - this.height - 20);
+      ctx.lineTo(this.x + this.width - 12, this.y - this.height);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    },
+
+    update() {
+      this.vy += this.gravity;
+      this.y += this.vy;
+      if (this.y > groundY) {
+        this.y = groundY;
+        this.vy = 0;
+        this.grounded = true;
+      } else {
+        this.grounded = false;
+      }
+    },
+
+    jump() {
+      if (this.grounded) {
+        this.vy = this.jumpForce;
+        this.grounded = false;
+      }
+    },
+
+    getRect() {
+      return {x: this.x, y: this.y - this.height, width: this.width, height: this.height};
+    }
+  };
+
+  // Obstacles
+  class Obstacle {
+    constructor(type, x, width, height, color, speed) {
+      this.type = type; // tipo pode influenciar forma e som da colisão
+      this.x = x;
+      this.width = width;
+      this.height = height;
+      this.color = color;
+      this.speed = speed;
+      this.y = groundY;
+      if (type === 'flying') {
+        this.y = groundY - 150;
+        this.height = 40;
+      }
+    }
+
+    update() {
+      this.x -= this.speed;
+    }
+
+    draw() {
+      ctx.shadowColor = '#bb2200';
+      ctx.shadowBlur = 7;
+      ctx.fillStyle = this.color;
+      if (this.type === 'normal') {
+        // Tronco ou muro de madeira samurai
+        ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
+        // decals (linhas horizontais claras)
+        ctx.strokeStyle = 'rgba(230,180,120,0.7)';
+        ctx.lineWidth = 3;
+        for (let i = 1; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(this.x, this.y - this.height + i * (this.height / 4));
+          ctx.lineTo(this.x + this.width, this.y - this.height + i * (this.height / 4));
+          ctx.stroke();
+        }
+      } else if (this.type === 'flying') {
+        // Espada voadora
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + this.width, this.y - this.height / 2);
+        ctx.lineTo(this.x + this.width - 10, this.y - this.height);
+        ctx.lineTo(this.x + 15, this.y - this.height - 10);
+        ctx.closePath();
+        ctx.fill();
+        // lâmina brilho
+        ctx.strokeStyle = '#ffe6a7';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+    }
+
+    isOffScreen() {
+      return this.x + this.width < 0;
+    }
+
+    getRect() {
+      return {x: this.x, y: this.y - this.height, width: this.width, height: this.height};
+    }
+  }
+
+  let obstacles = [];
+
+  // Helpers
+  function rectsOverlap(r1, r2) {
+    return !(r2.x > r1.x + r1.width ||
+             r2.x + r2.width < r1.x ||
+             r2.y > r1.y + r1.height ||
+             r2.y + r2.height < r1.y);
+  }
+
+  // Ground drawing
+  function drawGround() {
+    const grad = ctx.createLinearGradient(0, groundY, 0, height);
+    grad.addColorStop(0, '#30221a');
+    grad.addColorStop(1, '#080402');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, groundY, width, height - groundY);
+
+    // Style lines on ground for terrain
+    ctx.strokeStyle = '#5c3a1a99';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < width; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, groundY);
+      ctx.lineTo(x + 20, groundY - 10);
+      ctx.stroke();
+    }
+  }
+
+  // Messages
+  const messageEl = document.getElementById('message');
+  const startMessageEl = document.getElementById('startMessage');
+  const scoreEl = document.getElementById('score');
+
+  function showMessage(text, duration=2000) {
+    messageEl.textContent = text;
+    messageEl.style.display = 'block';
+    setTimeout(() => {
+      messageEl.style.display = 'none';
+    }, duration);
+  }
+
+  // Game loop
+  function updateGame() {
+    if (!running) return;
+
+    ctx.clearRect(0, 0, width, height);
+
+    drawGround();
+
+    player.update();
+    player.draw();
+
+    // Update obstacles
+    obstacleSpawnTimer++;
+    if (obstacleSpawnTimer > obstacleSpawnInterval) {
+      obstacleSpawnTimer = 0;
+
+      // Escolher tipo de obstáculo: normal ou voador (flying)
+      // Aumenta chance de voadores após 200 pontos
+      let obstacleType = 'normal';
+      if (score > 200 && Math.random() < 0.4) {
+        obstacleType = 'flying';
+      }
+
+      let obsWidth = obstacleType === 'normal' ? 35 + Math.random() * 15 : 45;
+      let obsHeight = obstacleType === 'normal' ? 50 + Math.random()*20 : 30;
+      let obsColor = obstacleType === 'normal' ? '#654321' : '#d8b93a';
+
+      obstacles.push(new Obstacle(
+        obstacleType,
+        width + 20,
+        obsWidth,
+        obsHeight,
+        obsColor,
+        speed
+      ));
+    }
+
+    // Update and draw obstacles, remove off-screen
+    obstacles = obstacles.filter(obstacle => {
+      obstacle.update();
+      obstacle.draw();
+      // Check collision
+      if (rectsOverlap(player.getRect(), obstacle.getRect())) {
+        endGame();
+      }
+      return !obstacle.isOffScreen();
+    });
+
+    // Update score
+    score++;
+    scoreEl.textContent = score;
+
+    // Increase difficulty
+    if (score % difficultyStep === 0 && speed < maxSpeed) {
+      speed = Math.min(speed + speedIncrement, maxSpeed);
+      obstacleSpawnInterval = Math.max(40, obstacleSpawnInterval - 8);
+      showMessage('Dificuldade aumentada!', 1200);
+    }
+
+    requestAnimationFrame(updateGame);
+  }
+
+  function endGame() {
+    running = false;
+    gameOver = true;
+    showMessage(`Game Over! Pontuação final: ${score}`, 5000);
+    startMessageEl.style.display = 'block';
+  }
+
+  function startGame() {
+    obstacles = [];
+    score = 0;
+    speed = 6;
+    obstacleSpawnInterval = 120;
+    gameOver = false;
+    running = true;
+    startMessageEl.style.display = 'none';
+    messageEl.style.display = 'none';
+    updateGame();
+  }
+
+  // Controls
+  function onSpaceOrClick(e) {
+    if (!running) {
+      startGame();
+    } else {
+      player.jump();
+    }
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      onSpaceOrClick();
+    }
+  });
+  window.addEventListener('touchstart', e => {
+    e.preventDefault();
+    onSpaceOrClick();
+  }, {passive: false});
+
+  // Initial draw
+  ctx.fillStyle = '#d94016';
+  ctx.font = "40px 'Press Start 2P', cursive";
+  ctx.textAlign = 'center';
+  ctx.fillText('Samurai Infinity Run', width/2, height/2 - 40);
+  ctx.font = "16px 'Roboto', sans-serif";
+  ctx.fillStyle = '#f5deb3';
+  ctx.fillText('Pressione Espaço ou Toque para Começar', width/2, height/2 + 20);
+
+})();
+</script>
+</body>
+</html>
+
